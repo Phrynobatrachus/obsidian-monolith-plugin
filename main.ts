@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { homedir } from 'os';
+import { stat } from 'fs/promises'
 import { App, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
 // Remember to rename these classes and interfaces!
@@ -37,7 +38,13 @@ export default class MonolithPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 				const potentialUrl = view?.editor.getSelection() || "";
-				const url = new URL(potentialUrl);
+				let url;
+				try {
+					url = new URL(potentialUrl);
+				} catch (e) {
+					// ignore
+				}
+
 
 				if (url) {
 					// If checking is true, we're simply "checking" if the command can be run.
@@ -104,14 +111,7 @@ export class ArchiveLink extends MarkdownRenderChild {
 	openLink(e: Event) {
 		e.preventDefault();
 		// @ts-ignore
-		const browser = spawn('open', [this.containerEl.href]);
-
-		browser.stdout.on('data', (data) => {
-			console.log(data.toString());
-		});
-		browser.stderr.on('data', (data) => {
-			console.log(data.toString());
-		});
+		window.open(this.containerEl.href);
 	}
 
 	onload() {
@@ -150,8 +150,24 @@ class SettingTab extends PluginSettingTab {
 				.setPlaceholder('$HOME')
 				.setValue(this.plugin.settings.outputPath)
 				.onChange(async (value) => {
-					this.plugin.settings.outputPath = value;
-					await this.plugin.saveSettings();
+					let stats;
+					try {
+						stats = await stat(value);
+					} catch (e) {
+						if (!containerEl.querySelector('.outErr')) {
+							containerEl.createEl('h2', { text: `Invalid path will not be saved.`, cls: 'outErr' })
+						}
+					}
+
+					if (stats && stats.isDirectory()) {
+						this.plugin.settings.outputPath = value;
+						await this.plugin.saveSettings();
+
+						const err = containerEl.querySelector('.outErr');
+						if (err) {
+							containerEl.removeChild(err);
+						}
+					}
 				}));
 	}
 }
