@@ -130,7 +130,11 @@ export default class MonolithPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 				const potentialUrl = view?.editor.getSelection() || "";
-				const from = view?.editor.getCursor("from");
+				const range = { from: view?.editor.getCursor("from"), to: view?.editor.getCursor("to") };
+				const head = view?.editor.getCursor("head");
+				const anchor = view?.editor.getCursor("anchor");
+
+				// debugger;
 
 				let url;
 				try {
@@ -140,11 +144,11 @@ export default class MonolithPlugin extends Plugin {
 				}
 
 
-				if (view && url && from) {
+				if (view && url && range) {
 					// If checking is true, we're simply "checking" if the command can be run.
 					// If checking is false, then we want to actually perform the operation.
 					if (!checking) {
-						this.archiveLink(view, url, from);
+						this.archiveLink(view, url, range);
 					}
 
 					return true;
@@ -153,7 +157,7 @@ export default class MonolithPlugin extends Plugin {
 		});
 	}
 
-	archiveLink(view: MarkdownView, url: URL, from: EditorPosition) {
+	archiveLink(view: MarkdownView, url: URL, range: any) {
 		const path = url.pathname.split('/');
 		// trailing slash is falsy
 		const outputFile = `${path.pop() || path.pop()}.html`;
@@ -173,7 +177,8 @@ export default class MonolithPlugin extends Plugin {
 			if (code === 0) {
 				const anchorString = `<a class="archivedLink" href="file://${this.settings.outputPath}/${outputFile}">(archived)</a>`;
 				// add link to output file
-				view.editor.setSelection(`${url.toString()} ${anchorString}`, from)
+				view.editor.setSelection(range.to, range.from);
+				view.editor.replaceSelection(`${url.toString()} ${anchorString}`)
 				new Notice('Link archived!');
 			} else {
 				new Notice('Archiving failed, check console.')
