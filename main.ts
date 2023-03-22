@@ -1,12 +1,17 @@
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { stat } from 'fs/promises'
-import { App, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
 // Remember to rename these classes and interfaces!
 interface MonolithPluginSettings {
 	cliOpts: string[];
 	outputPath: string;
+}
+
+interface Range {
+	from: EditorPosition
+	to: EditorPosition
 }
 
 const DEFAULT_SETTINGS: MonolithPluginSettings = {
@@ -21,23 +26,17 @@ export default class MonolithPlugin extends Plugin {
 		await this.loadSettings();
 		this.addSettingTab(new SettingTab(this.app, this));
 
-		this.registerMarkdownPostProcessor((element, context) => {
-			const links = element.querySelectorAll("a.archivedLink");
-
-			for (let index = 0; index < links.length; index++) {
-				const link = links.item(index);
-				// @ts-ignore
-				context.addChild(new ArchiveLink(link));
-			}
-		});
-
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 		this.addCommand({
 			id: 'archive-link',
 			name: 'Archive link',
 			checkCallback: (checking: boolean) => {
 				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-				const potentialUrl = view?.editor.getSelection() || "";
+				if (!view) return true;
+
+				const potentialUrl = view.editor.getSelection() || "";
+				const range = { from: view.editor.getCursor("from"), to: view.editor.getCursor("to") };
+
 				let url;
 				try {
 					url = new URL(potentialUrl);
@@ -50,11 +49,7 @@ export default class MonolithPlugin extends Plugin {
 					// If checking is true, we're simply "checking" if the command can be run.
 					// If checking is false, then we want to actually perform the operation.
 					if (!checking) {
-						const outputFile = this.archiveLink(url);
-						const anchorString = `<a class="archivedLink" href="file://${this.settings.outputPath}/${outputFile}">(archived)</a>`;
-
-						// add link to output file
-						view?.editor.replaceSelection(`${url.toString()} ${anchorString}`)
+						this.archiveLink(view, url, range);
 					}
 
 					return true;
@@ -63,7 +58,7 @@ export default class MonolithPlugin extends Plugin {
 		});
 	}
 
-	archiveLink(url: URL) {
+	archiveLink(view: MarkdownView, url: URL, range: Range) {
 		const path = url.pathname.split('/');
 		// trailing slash is falsy
 		const outputFile = `${path.pop() || path.pop()}.html`;
@@ -81,13 +76,15 @@ export default class MonolithPlugin extends Plugin {
 		});
 		monolith.on('close', (code) => {
 			if (code === 0) {
-				new Notice('Link archived!')
+				const linkString = `[(archived)](file://${this.settings.outputPath}/${outputFile})`
+				// add link to output file
+				view.editor.setSelection(range.to, range.from);
+				view.editor.replaceSelection(`${url.toString()} ${linkString}`)
+				new Notice('Link archived!');
 			} else {
 				new Notice('Archiving failed, check console.')
 			}
 		});
-
-		return outputFile;
 	}
 
 	onunload() {
@@ -100,22 +97,6 @@ export default class MonolithPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-}
-
-export class ArchiveLink extends MarkdownRenderChild {
-	constructor(containerEl: HTMLElement) {
-		super(containerEl);
-	}
-
-	openLink(e: Event) {
-		e.preventDefault();
-		// @ts-ignore
-		window.open(this.containerEl.href);
-	}
-
-	onload() {
-		this.containerEl.onclick = this.openLink.bind(this);
 	}
 }
 
