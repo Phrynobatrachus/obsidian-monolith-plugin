@@ -1,7 +1,20 @@
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { stat } from 'fs/promises'
-import { App, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, EditorPosition, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { syntaxTree, tokenClassNodeProp } from "@codemirror/language";
+import { RangeSetBuilder } from "@codemirror/state";
+import {
+	Decoration,
+	DecorationSet,
+	EditorView,
+	PluginSpec,
+	PluginValue,
+	ViewPlugin,
+	ViewUpdate,
+	WidgetType,
+} from "@codemirror/view";
+import { SyntaxNodeRef } from '@lezer/common';
 
 // Remember to rename these classes and interfaces!
 interface MonolithPluginSettings {
@@ -13,6 +26,82 @@ const DEFAULT_SETTINGS: MonolithPluginSettings = {
 	cliOpts: ['--no-js', '--isolate'],
 	outputPath: homedir()
 }
+
+
+class MonoViewPlugin implements PluginValue {
+	decorations: DecorationSet;
+	constructor(view: EditorView) {
+		this.decorations = this.buildDecorations(view);
+	}
+
+	update(update: ViewUpdate) {
+		// window.console.log("update: ", update);
+		if (update.docChanged || update.viewportChanged) {
+			this.decorations = this.buildDecorations(update.view);
+		}
+	}
+
+	destroy() {
+	}
+
+	buildDecorations(view: EditorView): DecorationSet {
+		const builder = new RangeSetBuilder<Decoration>();
+
+		for (let { from, to } of view.visibleRanges) {
+			for (let pos = from; pos <= to;) {
+				const line = view.state.doc.lineAt(pos);
+				pos = line.to + 1
+				// console.log("line: ", line)
+			}
+
+
+			// syntaxTree(view.state).iterate({
+			// 	from,
+			// 	to,
+			// 	enter(node: SyntaxNodeRef) {
+
+
+			// 		const tokenProps = node.type.prop(tokenClassNodeProp);
+
+			// 		if (tokenProps) {
+			// 			const props = new Set(tokenProps.split(" "));
+			// 			// console.log("props: ", props)
+
+			// 			const isUrl = props.has("url");
+
+			// 			if (isUrl) {
+			// 				console.log("url? ", view.state.doc.lineAt(from))
+			// 			}
+			// 		}
+
+
+			// 	}
+			// })
+		}
+
+		return builder.finish();
+	}
+}
+
+class LinkWidget extends WidgetType {
+	toDOM(view: EditorView): HTMLElement {
+		const div = document.createElement("a");
+
+		div.innerText = "bazinga";
+		return div;
+	}
+
+	onclick(e: Event) {
+		e.preventDefault();
+
+		window.open((e.target as HTMLAnchorElement).href);
+	}
+}
+
+const pluginSpec: PluginSpec<MonoViewPlugin> = {
+	decorations: (value: MonoViewPlugin) => value.decorations,
+}
+
 
 export default class MonolithPlugin extends Plugin {
 	settings: MonolithPluginSettings;
@@ -31,6 +120,9 @@ export default class MonolithPlugin extends Plugin {
 			}
 		});
 
+		const hm = ViewPlugin.fromClass(MonoViewPlugin, pluginSpec);
+		this.registerEditorExtension([hm]);
+
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 		this.addCommand({
 			id: 'archive-link',
@@ -38,6 +130,8 @@ export default class MonolithPlugin extends Plugin {
 			checkCallback: (checking: boolean) => {
 				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 				const potentialUrl = view?.editor.getSelection() || "";
+				const from = view?.editor.getCursor("from");
+
 				let url;
 				try {
 					url = new URL(potentialUrl);
@@ -46,15 +140,11 @@ export default class MonolithPlugin extends Plugin {
 				}
 
 
-				if (url) {
+				if (view && url && from) {
 					// If checking is true, we're simply "checking" if the command can be run.
 					// If checking is false, then we want to actually perform the operation.
 					if (!checking) {
-						const outputFile = this.archiveLink(url);
-						const anchorString = `<a class="archivedLink" href="file://${this.settings.outputPath}/${outputFile}">(archived)</a>`;
-
-						// add link to output file
-						view?.editor.replaceSelection(`${url.toString()} ${anchorString}`)
+						this.archiveLink(view, url, from);
 					}
 
 					return true;
@@ -63,7 +153,7 @@ export default class MonolithPlugin extends Plugin {
 		});
 	}
 
-	archiveLink(url: URL) {
+	archiveLink(view: MarkdownView, url: URL, from: EditorPosition) {
 		const path = url.pathname.split('/');
 		// trailing slash is falsy
 		const outputFile = `${path.pop() || path.pop()}.html`;
@@ -81,13 +171,14 @@ export default class MonolithPlugin extends Plugin {
 		});
 		monolith.on('close', (code) => {
 			if (code === 0) {
-				new Notice('Link archived!')
+				const anchorString = `<a class="archivedLink" href="file://${this.settings.outputPath}/${outputFile}">(archived)</a>`;
+				// add link to output file
+				view.editor.setSelection(`${url.toString()} ${anchorString}`, from)
+				new Notice('Link archived!');
 			} else {
 				new Notice('Archiving failed, check console.')
 			}
 		});
-
-		return outputFile;
 	}
 
 	onunload() {
