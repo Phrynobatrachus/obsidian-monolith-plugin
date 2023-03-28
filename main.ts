@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { stat } from 'fs/promises'
-import { App, EditorPosition, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, editorLivePreviewField, EditorPosition, MarkdownRenderChild, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import { syntaxTree, tokenClassNodeProp } from "@codemirror/language";
 import { RangeSetBuilder } from "@codemirror/state";
 import {
@@ -28,15 +28,19 @@ const DEFAULT_SETTINGS: MonolithPluginSettings = {
 }
 
 
-class MonoViewPlugin implements PluginValue {
+class MonolithViewPlugin implements PluginValue {
 	decorations: DecorationSet;
 	constructor(view: EditorView) {
 		this.decorations = this.buildDecorations(view);
 	}
 
 	update(update: ViewUpdate) {
-		// window.console.log("update: ", update);
+		if (!update.state.field(editorLivePreviewField)) {
+			this.decorations = Decoration.none;
+			return;
+		}
 		if (update.docChanged || update.viewportChanged) {
+			// window.console.log("update: ", update);
 			this.decorations = this.buildDecorations(update.view);
 		}
 	}
@@ -47,36 +51,44 @@ class MonoViewPlugin implements PluginValue {
 	buildDecorations(view: EditorView): DecorationSet {
 		const builder = new RangeSetBuilder<Decoration>();
 
-		for (let { from, to } of view.visibleRanges) {
+		for (const { from, to } of view.visibleRanges) {
 			for (let pos = from; pos <= to;) {
 				const line = view.state.doc.lineAt(pos);
+				const lineChunks = line.text.split(' ');
+
+				console.log("pos: ", pos)
+
+				const i = lineChunks.findIndex((s) => {
+					try {
+						return new URL(s);
+					} catch (e) {
+						// ignore
+					}
+				});
+
+
+
+				if (i !== -1) {
+					const afterUrl = lineChunks.slice(i + 1).join(' ');
+					const isArchiveLink = afterUrl.contains("class=\"archivedLink\"") && afterUrl.slice(-2) === "a>";
+
+					if (isArchiveLink) {
+						const dummy = document.createElement("template");
+						dummy.innerHTML = afterUrl;
+						const href = (dummy.content.firstElementChild as HTMLAnchorElement).href
+						const startPos = pos + lineChunks[i].length + 1;
+						const endPos = startPos + afterUrl.length;
+						const deco = Decoration.replace({ widget: new LinkWidget(href) });
+
+						if ((<any>builder).lastFrom === line.from) {
+							deco.startSide = (<any>builder).last.startSide + 1;
+						}
+
+						builder.add(startPos, endPos, deco);
+					}
+				}
 				pos = line.to + 1
-				// console.log("line: ", line)
 			}
-
-
-			// syntaxTree(view.state).iterate({
-			// 	from,
-			// 	to,
-			// 	enter(node: SyntaxNodeRef) {
-
-
-			// 		const tokenProps = node.type.prop(tokenClassNodeProp);
-
-			// 		if (tokenProps) {
-			// 			const props = new Set(tokenProps.split(" "));
-			// 			// console.log("props: ", props)
-
-			// 			const isUrl = props.has("url");
-
-			// 			if (isUrl) {
-			// 				console.log("url? ", view.state.doc.lineAt(from))
-			// 			}
-			// 		}
-
-
-			// 	}
-			// })
 		}
 
 		return builder.finish();
@@ -84,22 +96,33 @@ class MonoViewPlugin implements PluginValue {
 }
 
 class LinkWidget extends WidgetType {
-	toDOM(view: EditorView): HTMLElement {
-		const div = document.createElement("a");
+	href: string
+	constructor(href: string) {
+		super();
 
-		div.innerText = "bazinga";
-		return div;
+		this.href = href;
+	}
+
+	toDOM(view: EditorView): HTMLElement {
+		const link = document.createElement("a");
+
+		link.innerText = "(archived)";
+		link.href = this.href;
+		link.onclick = this.onclick;
+		return link;
 	}
 
 	onclick(e: Event) {
 		e.preventDefault();
 
+		console.log("onclick")
+
 		window.open((e.target as HTMLAnchorElement).href);
 	}
 }
 
-const pluginSpec: PluginSpec<MonoViewPlugin> = {
-	decorations: (value: MonoViewPlugin) => value.decorations,
+const pluginSpec: PluginSpec<MonolithViewPlugin> = {
+	decorations: (value: MonolithViewPlugin) => value.decorations,
 }
 
 
@@ -120,8 +143,8 @@ export default class MonolithPlugin extends Plugin {
 			}
 		});
 
-		const hm = ViewPlugin.fromClass(MonoViewPlugin, pluginSpec);
-		this.registerEditorExtension([hm]);
+		const ext = ViewPlugin.fromClass(MonolithViewPlugin, pluginSpec);
+		this.registerEditorExtension([ext]);
 
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 		this.addCommand({
@@ -206,12 +229,11 @@ export class ArchiveLink extends MarkdownRenderChild {
 
 	openLink(e: Event) {
 		e.preventDefault();
-		// @ts-ignore
-		window.open(this.containerEl.href);
+		window.open((e.target as HTMLAnchorElement).href);
 	}
 
 	onload() {
-		this.containerEl.onclick = this.openLink.bind(this);
+		this.containerEl.onclick = this.openLink;
 	}
 }
 
