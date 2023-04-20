@@ -61,7 +61,8 @@ export default class MonolithPlugin extends Plugin {
 	archiveLink(view: MarkdownView, url: URL, range: Range) {
 		const path = url.pathname.split('/');
 		// trailing slash is falsy
-		const outputFile = `${path.pop() || path.pop()}.html`;
+		const slug = `${path.pop() || path.pop()}`;
+		const outputFile = `${slug}${slug.slice(-5) !== '.html' ? ".html" : ""}`;
 		const baseArgs = [`-o${outputFile}`, url.toString()];
 		const args = (this.settings.cliOpts[0] !== '') ? [...this.settings.cliOpts, ...baseArgs] : baseArgs;
 		const spawnOpts = { cwd: this.settings.outputPath };
